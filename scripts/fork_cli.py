@@ -615,8 +615,31 @@ class CodexAppServerClient:
             raise ForkToolError("thread/fork returned an unexpected payload")
         return result["thread"]
 
+    def resume_thread(self, thread_id: str, persist_extended_history: bool = False) -> dict:
+        response = self.request(
+            "thread/resume",
+            {
+                "threadId": thread_id,
+                "persistExtendedHistory": persist_extended_history,
+            },
+        )
+        result = response.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("thread"), dict):
+            raise ForkToolError("thread/resume returned an unexpected payload")
+        return result["thread"]
+
     def rollback_thread(self, thread_id: str, num_turns: int) -> None:
         self.request("thread/rollback", {"threadId": thread_id, "numTurns": num_turns})
+
+    def list_loaded_threads(self) -> list[str]:
+        response = self.request("thread/loaded/list", {})
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise ForkToolError("thread/loaded/list returned an unexpected payload")
+        data = result.get("data")
+        if not isinstance(data, list):
+            raise ForkToolError("thread/loaded/list returned no data array")
+        return [str(item) for item in data]
 
     @staticmethod
     def _get_free_port() -> int:
@@ -667,6 +690,75 @@ def wait_for_key(prompt: str = "Press any key to continue...") -> None:
     print()
     print(prompt)
     msvcrt.getwch()
+
+
+def find_running_codex_desktop_executable() -> str:
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    result = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                "Get-CimInstance Win32_Process | "
+                "Where-Object { "
+                "$_.Name -eq 'Codex.exe' -and "
+                "$_.ExecutablePath -like '*Codex.exe' -and "
+                "$_.ExecutablePath -notlike '*\\\\resources\\\\codex.exe' -and "
+                "$_.CommandLine -notlike '*--type=*' "
+                "} | "
+                "Select-Object -First 1 -ExpandProperty ExecutablePath"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        creationflags=creationflags,
+        check=False,
+    )
+    return result.stdout.strip()
+
+
+def restart_codex_desktop_app() -> tuple[str, str]:
+    executable_path = find_running_codex_desktop_executable()
+    if not executable_path:
+        return "not_running", ""
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                (
+                    f"$exe = '{executable_path}'; "
+                    "Get-CimInstance Win32_Process | "
+                    "Where-Object { $_.ExecutablePath -eq $exe } | "
+                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+                ),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+            check=False,
+        )
+        time.sleep(1.5)
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"Start-Process -FilePath '{executable_path}'",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+            check=False,
+        )
+        return "restarted", ""
+    except Exception as exc:  # noqa: BLE001
+        return "failed", str(exc)
 
 
 def format_detail(text: str, width: int, max_lines: int = 14) -> str:
@@ -821,7 +913,7 @@ def perform_fork(
     session: SessionSummary,
     turn: UserTurnSummary,
     client: CodexAppServerClient,
-) -> dict[str, str | int]:
+) -> dict[str, str | int | bool]:
     source_thread = client.read_thread(session.thread_id)
     raw_turns = source_thread.get("turns")
     if not isinstance(raw_turns, list):
@@ -861,16 +953,27 @@ def perform_fork(
             f"Fork verification failed: expected last turn {turn.turn_id}, got {last_turn_id}"
         )
 
+    codex_sync_status = "failed"
+    codex_sync_error = ""
+    try:
+        client.resume_thread(forked_thread_id, persist_extended_history=False)
+        loaded_threads = client.list_loaded_threads()
+        codex_sync_status = "loaded" if forked_thread_id in loaded_threads else "requested"
+    except Exception as exc:  # noqa: BLE001
+        codex_sync_error = str(exc)
+
     return {
         "original_thread_id": session.thread_id,
         "forked_thread_id": forked_thread_id,
         "target_turn_id": turn.turn_id,
         "dropped_turns": dropped_turns,
         "forked_path": str(verify_thread.get("path") or "").strip(),
+        "codex_sync_status": codex_sync_status,
+        "codex_sync_error": codex_sync_error,
     }
 
 
-def show_result(result: dict[str, str | int]) -> None:
+def show_result(result: dict[str, str | int | bool]) -> None:
     clear_screen()
     print("Fork complete")
     print()
@@ -880,7 +983,25 @@ def show_result(result: dict[str, str | int]) -> None:
     print(f"Dropped turns:   {result['dropped_turns']}")
     print(f"Fork path:       {result['forked_path'] or '(unknown)'}")
     print()
-    print("If the new thread does not appear immediately in Codex App, reload or restart the app.")
+    if result["codex_sync_status"] == "loaded":
+        print("Codex sync:      attempted via thread/resume and loaded in the current Codex backend.")
+    elif result["codex_sync_status"] == "requested":
+        print("Codex sync:      attempted via thread/resume.")
+    else:
+        print("Codex sync:      automatic load attempt failed.")
+        if result["codex_sync_error"]:
+            print(f"Load warning:    {result['codex_sync_error']}")
+    print()
+    if result["desktop_app_restart_status"] == "restarted":
+        print("Desktop app:     Codex App was restarted to refresh the thread list.")
+    elif result["desktop_app_restart_status"] == "not_running":
+        print("Desktop app:     Codex App was not running, so no restart was needed.")
+    else:
+        print("Desktop app:     Automatic restart failed.")
+        if result["desktop_app_restart_error"]:
+            print(f"Restart warning: {result['desktop_app_restart_error']}")
+    print()
+    print("If the new thread still does not appear in Codex App, reopen the app manually.")
     wait_for_key()
 
 
@@ -926,6 +1047,10 @@ def run_interactive(codex_home: Path, workdir: Path) -> int:
                 continue
 
             result = perform_fork(session, turn, client)
+            client.stop()
+            restart_status, restart_error = restart_codex_desktop_app()
+            result["desktop_app_restart_status"] = restart_status
+            result["desktop_app_restart_error"] = restart_error
             show_result(result)
             return 0
     except KeyboardInterrupt:

@@ -90,7 +90,9 @@ flowchart TD
 
 - 不会修改原线程
 - 只会对新创建的线程执行 rollback
-- 如果 Codex App 没有立刻显示新线程，重启或刷新即可
+- fork 完成后，工具会先尝试通过 `thread/resume` 自动把新线程加载进 Codex
+- 如果 Codex Desktop 正在运行，工具还会自动重启 App 来刷新线程列表
+- 如果新线程仍然没有显示出来，再手动重新打开 Codex
 
 ## License
 

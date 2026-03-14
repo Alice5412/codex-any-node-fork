@@ -92,7 +92,9 @@ flowchart TD
 
 - The original thread is never modified
 - Rollback is applied only to the new thread
-- If the new thread does not appear immediately in Codex App, refresh or restart the app
+- After a fork, the tool attempts to load the new thread into Codex automatically via `thread/resume`
+- If Codex Desktop is running, the tool also restarts the app to refresh the thread list
+- If the new thread still does not appear, reopen Codex manually
 
 ## License
 
