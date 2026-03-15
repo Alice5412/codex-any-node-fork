@@ -1005,6 +1005,42 @@ def show_result(result: dict[str, str | int | bool]) -> None:
     wait_for_key()
 
 
+def run_gui(codex_home: Path, workdir: Path | None) -> int:
+    if os.name == "nt":
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        gui_script = Path(__file__).with_name("fork_gui.py")
+        if pythonw.exists():
+            argv = [
+                str(pythonw),
+                str(gui_script),
+                "--codex-home",
+                str(codex_home),
+            ]
+            if workdir is not None:
+                argv.extend(["--workdir", str(workdir)])
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            try:
+                subprocess.Popen(
+                    argv,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creationflags,
+                )
+                return 0
+            except OSError:
+                pass
+
+    from fork_gui import main as gui_main
+
+    argv = [
+        "--codex-home",
+        str(codex_home),
+    ]
+    if workdir is not None:
+        argv.extend(["--workdir", str(workdir)])
+    return gui_main(argv)
+
+
 def run_interactive(codex_home: Path, workdir: Path) -> int:
     sessions = find_sessions(codex_home, str(workdir))
     if not sessions:
@@ -1064,8 +1100,9 @@ def run_interactive(codex_home: Path, workdir: Path) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Interactive Codex any-node fork tool")
     parser.add_argument("-ls", "--list-sessions", action="store_true", help="List conversations for the current working directory")
+    parser.add_argument("--gui", action="store_true", help="Launch the graphical interface")
     parser.add_argument("--codex-home", type=Path, default=DEFAULT_CODEX_HOME, help="Codex home directory")
-    parser.add_argument("--workdir", type=Path, default=Path.cwd(), help="Target working directory; defaults to current directory")
+    parser.add_argument("--workdir", type=Path, help="Target working directory; defaults to current directory")
     return parser
 
 
@@ -1076,11 +1113,16 @@ def main() -> int:
     if len(sys.argv) == 1:
         args.list_sessions = True
 
+    workdir = args.workdir.expanduser().resolve() if args.workdir is not None else Path.cwd().resolve()
+
+    if args.gui:
+        explicit_workdir = args.workdir.expanduser().resolve() if args.workdir is not None else None
+        return run_gui(args.codex_home.expanduser().resolve(), explicit_workdir)
+
     if not args.list_sessions:
         parser.error("Use `fork -ls` to start interactive selection.")
 
     codex_home = args.codex_home.expanduser().resolve()
-    workdir = args.workdir.expanduser().resolve()
     try:
         return run_interactive(codex_home, workdir)
     except ForkToolError as exc:

@@ -2,14 +2,20 @@
 
 中文说明: [README_CN.md](./README_CN.md)
 
-A lightweight Windows command-line tool for browsing local Codex Desktop / Codex CLI conversations by working directory and creating a fork from any selectable conversation node.
+A lightweight Windows tool for browsing local Codex Desktop / Codex CLI conversations by working directory and creating a fork from any selectable conversation node. It now includes both an interactive CLI and a graphical GUI.
 
 ## Features
 
 - Filter local Codex conversations by the current working directory
 - Navigate conversations with the keyboard
+- Browse conversations and user messages in a graphical interface
+- The GUI uses a modern dark dashboard layout with a status rail, recent workdirs, and split content panels
 - Show only user messages as fork candidates
 - Create a new branch thread with `fork + rollback`
+- Remember selected or used work directories in the GUI and prefer them on the next launch
+- Refresh the conversation list manually from the GUI
+- Refresh the conversation list automatically when the work directory changes
+- Refresh the conversation list automatically after a successful fork
 
 ## Requirements
 
@@ -35,6 +41,22 @@ Run:
 fork -ls
 ```
 
+Launch the GUI:
+
+```powershell
+fork --gui
+```
+
+On Windows this path prefers launching the GUI as a detached no-console process.
+
+Or use the dedicated launcher:
+
+```powershell
+fork-gui
+```
+
+The launcher prefers `pythonw` so the GUI does not keep an extra `cmd` window open.
+
 
 If the project directory is not in `PATH`, use:
 
@@ -48,12 +70,31 @@ Or run the script directly:
 python .\scripts\fork_cli.py -ls
 ```
 
+Or:
+
+```powershell
+python .\scripts\fork_gui.py
+```
+
 ## Controls
 
 - `↑ / ↓`: move selection
 - `Enter`: confirm
 - `Backspace`: go back
 - `q`: quit
+
+## GUI
+
+- The GUI uses a modern dark card-based layout with a workspace rail and split content panels
+- `Workdir` uses an editable dropdown that remembers recently selected or used work directories
+- A recent-workdirs list is shown on the left side for one-click switching
+- The GUI prefers the last remembered work directory on the next launch
+- You can enable “minimize to tray when closing” so the close button hides the window instead of exiting
+- `Refresh` button: reload the conversation list for the selected `codex_home` and `workdir`
+- Changing `Workdir` triggers an automatic refresh
+- `F5`: trigger a manual refresh
+- Double-click a user message or use `Fork Selected Turn` to create a fork
+- After a successful fork, the GUI refreshes the conversation list automatically
 
 After entering a conversation, the tool shows only user messages.
 Once a target message is selected, it creates a new thread and rolls that new thread back to the matching turn.
@@ -80,11 +121,13 @@ flowchart TD
 .
 ├─ add_to_user_path.cmd
 ├─ fork.cmd
+├─ fork-gui.cmd
 ├─ LICENSE
 ├─ README.md
 ├─ README_CN.md
 └─ scripts
    ├─ fork_cli.py
+   ├─ fork_gui.py
    └─ session_tool.py
 ```
 
