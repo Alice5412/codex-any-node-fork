@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   color-scheme: dark;
   --bg-1: #171821;
   --bg-2: #21222c;
@@ -190,6 +190,10 @@ h2 {
 }
 
 .compact-toolbar {
+  margin-top: 14px;
+}
+
+.accounts-root-form {
   margin-top: 14px;
 }
 
@@ -552,4 +556,3 @@ select:focus {
     height: min(56vh, 520px);
   }
 }
-

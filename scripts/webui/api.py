@@ -102,6 +102,13 @@ def serialize_desktop_restart(status: str, error: str) -> dict[str, str]:
     }
 
 
+def normalize_accounts_root_override(path_value: str | Path | None) -> Path | None:
+    text = str(path_value or "").strip()
+    if not text:
+        return None
+    return Path(text).expanduser().resolve()
+
+
 class ToolkitWebService:
     def __init__(
         self,
@@ -110,16 +117,22 @@ class ToolkitWebService:
         accounts_root: Path | None = None,
         initial_workdir: Path | None = None,
         max_remembered_workdirs: int = MAX_REMEMBERED_WORKDIRS,
+        workspace_state_path: Path | None = None,
+        legacy_workspace_state_path: Path | None = None,
     ) -> None:
         self.codex_home = (codex_home or DEFAULT_CODEX_HOME).expanduser().resolve()
-        self.accounts_root = accounts_root.expanduser().resolve() if accounts_root is not None else None
         self.initial_workdir = initial_workdir.expanduser().resolve() if initial_workdir is not None else None
         self.max_remembered_workdirs = max_remembered_workdirs
+        self.workspace_state_path = workspace_state_path
+        self.legacy_workspace_state_path = legacy_workspace_state_path
+        self.accounts_root = self._resolve_initial_accounts_root(accounts_root)
 
     def _load_workspace_state(self) -> dict[str, object]:
         return load_workspace_state(
             normalize_workdir=normalize_workdir,
             max_remembered_workdirs=self.max_remembered_workdirs,
+            state_path=self.workspace_state_path,
+            legacy_state_path=self.legacy_workspace_state_path,
         )
 
     def _resolve_workdir(self, requested_workdir: str | None) -> Path:
@@ -152,9 +165,42 @@ class ToolkitWebService:
         save_workspace_state(
             last_workdir=normalized,
             recent_workdirs=recent_workdirs,
+            accounts_root_override=self._configured_accounts_root_text(),
             max_remembered_workdirs=self.max_remembered_workdirs,
+            state_path=self.workspace_state_path,
         )
         return recent_workdirs
+
+    def _resolve_initial_accounts_root(self, accounts_root: Path | None) -> Path | None:
+        if accounts_root is not None:
+            return accounts_root.expanduser().resolve()
+        state = self._load_workspace_state()
+        saved_override = state.get("accounts_root_override")
+        if isinstance(saved_override, str) and saved_override.strip():
+            try:
+                return normalize_accounts_root_override(saved_override)
+            except OSError:
+                return None
+        return None
+
+    def _configured_accounts_root_text(self) -> str:
+        return str(self.accounts_root) if self.accounts_root is not None else ""
+
+    def update_accounts_root(
+        self,
+        accounts_root_value: str | None,
+        *,
+        requested_workdir: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            normalized_override = normalize_accounts_root_override(accounts_root_value)
+            if normalized_override is not None:
+                resolve_accounts_root(normalized_override)
+        except (AccountSwitchError, OSError) as exc:
+            raise WebUiError(str(exc)) from exc
+
+        self.accounts_root = normalized_override
+        return self.get_bootstrap(requested_workdir)
 
     @staticmethod
     def _serialize_account(account: Any, *, active_account: str | None) -> dict[str, Any]:
@@ -252,6 +298,7 @@ class ToolkitWebService:
             "codexHomeDescription": describe_target_codex_home(self.codex_home),
             "workdir": str(workdir),
             "recentWorkdirs": recent_workdirs,
+            "configuredAccountsRoot": self._configured_accounts_root_text(),
             **accounts_payload,
         }
 

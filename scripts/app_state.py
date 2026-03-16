@@ -13,19 +13,27 @@ TRANSFER_STATE_PATH = APP_STATE_DIR / "account-session-map.json"
 
 
 def _default_workspace_state() -> dict[str, object]:
-    return {"last_workdir": "", "recent_workdirs": []}
+    return {
+        "last_workdir": "",
+        "recent_workdirs": [],
+        "accounts_root_override": "",
+    }
 
 
 def load_workspace_state(
     *,
     normalize_workdir,
     max_remembered_workdirs: int,
+    state_path: Path | None = None,
+    legacy_state_path: Path | None = None,
 ) -> dict[str, object]:
-    state_path = WORKSPACE_STATE_PATH if WORKSPACE_STATE_PATH.exists() else LEGACY_WORKSPACE_STATE_PATH
-    if not state_path.exists():
+    primary_path = state_path or WORKSPACE_STATE_PATH
+    fallback_path = legacy_state_path or LEGACY_WORKSPACE_STATE_PATH
+    source_path = primary_path if primary_path.exists() else fallback_path
+    if not source_path.exists():
         return _default_workspace_state()
     try:
-        data = json.loads(state_path.read_text(encoding="utf-8"))
+        data = json.loads(source_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return _default_workspace_state()
     if not isinstance(data, dict):
@@ -58,9 +66,15 @@ def load_workspace_state(
         if len(remembered) >= max_remembered_workdirs:
             break
 
+    accounts_root_override = data.get("accounts_root_override")
+    normalized_accounts_root = ""
+    if isinstance(accounts_root_override, str):
+        normalized_accounts_root = accounts_root_override.strip()
+
     return {
         "last_workdir": remembered[0] if remembered else "",
         "recent_workdirs": remembered,
+        "accounts_root_override": normalized_accounts_root,
     }
 
 
@@ -68,14 +82,18 @@ def save_workspace_state(
     *,
     last_workdir: str,
     recent_workdirs: list[str],
+    accounts_root_override: str,
     max_remembered_workdirs: int,
+    state_path: Path | None = None,
 ) -> None:
+    target_path = state_path or WORKSPACE_STATE_PATH
     payload = {
         "last_workdir": last_workdir,
         "recent_workdirs": recent_workdirs[:max_remembered_workdirs],
+        "accounts_root_override": accounts_root_override.strip(),
     }
-    APP_STATE_DIR.mkdir(parents=True, exist_ok=True)
-    WORKSPACE_STATE_PATH.write_text(
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

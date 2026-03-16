@@ -83,7 +83,12 @@ class ToolkitWebUiHandler(BaseHTTPRequestHandler):
     def _handle_api_post(self, parsed: Any) -> None:
         try:
             body = self._read_json_body()
-            if parsed.path == "/api/accounts/switch":
+            if parsed.path == "/api/accounts-root":
+                payload = self.toolkit_server.service.update_accounts_root(
+                    self._optional_body_value(body, "accounts_root"),
+                    requested_workdir=self._optional_body_value(body, "workdir"),
+                )
+            elif parsed.path == "/api/accounts/switch":
                 payload = self.toolkit_server.service.switch_account(
                     self._required_body_value(body, "account_name"),
                     restart_codex=bool(body.get("restart_codex", True)),

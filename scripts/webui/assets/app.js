@@ -20,6 +20,9 @@ const elements = {
   codexHomeValue: document.getElementById("codexHomeValue"),
   targetProfileValue: document.getElementById("targetProfileValue"),
   accountsRootValue: document.getElementById("accountsRootValue"),
+  accountsRootInput: document.getElementById("accountsRootInput"),
+  autoAccountsRootButton: document.getElementById("autoAccountsRootButton"),
+  applyAccountsRootButton: document.getElementById("applyAccountsRootButton"),
   flash: document.getElementById("flash"),
   accountsNotice: document.getElementById("accountsNotice"),
   accountsList: document.getElementById("accountsList"),
@@ -156,6 +159,7 @@ function renderBootstrap() {
   elements.codexHomeValue.textContent = bootstrap.codexHome || "-";
   elements.targetProfileValue.textContent = bootstrap.codexHomeDescription || "-";
   elements.accountsRootValue.textContent = bootstrap.accountsRoot || bootstrap.accountsError || "-";
+  elements.accountsRootInput.value = bootstrap.configuredAccountsRoot || "";
   elements.recentWorkdirs.innerHTML = "";
   (bootstrap.recentWorkdirs || []).forEach((workdir) => {
     const option = document.createElement("option");
@@ -230,6 +234,10 @@ function renderAccounts() {
 
 function currentWorkdir() {
   return elements.workdirInput.value.trim() || state.bootstrap?.workdir || "";
+}
+
+function currentAccountsRootInput() {
+  return elements.accountsRootInput.value.trim();
 }
 
 function filteredSessions() {
@@ -455,6 +463,28 @@ function renderTransfer() {
   elements.copySelectedButton.disabled = !hasSelection || !elements.transferTargetSelect.value || state.transferGroup === "Unassigned";
 }
 
+async function handleAccountsRootUpdate(accountsRootValue) {
+  const requestedRoot = accountsRootValue ?? currentAccountsRootInput();
+  setBusy(elements.applyAccountsRootButton, true, "Applying...");
+  elements.autoAccountsRootButton.disabled = true;
+  try {
+    await apiFetch("/api/accounts-root", {
+      method: "POST",
+      body: JSON.stringify({
+        workdir: currentWorkdir(),
+        accounts_root: requestedRoot,
+      }),
+    });
+    await refreshAll(currentWorkdir());
+    showFlash(requestedRoot ? `Accounts root updated: ${requestedRoot}` : "Accounts root reset to auto-detect.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  } finally {
+    setBusy(elements.applyAccountsRootButton, false);
+    elements.autoAccountsRootButton.disabled = false;
+  }
+}
+
 async function handleAssignSelected() {
   const threadIds = Array.from(state.selectedTransferIds);
   if (!threadIds.length) {
@@ -564,6 +594,23 @@ function wireEvents() {
   elements.sessionSearchInput.addEventListener("input", (event) => {
     state.sessionSearch = event.target.value;
     renderSessions();
+  });
+
+  elements.applyAccountsRootButton.addEventListener("click", async () => {
+    await handleAccountsRootUpdate();
+  });
+
+  elements.autoAccountsRootButton.addEventListener("click", async () => {
+    elements.accountsRootInput.value = "";
+    await handleAccountsRootUpdate("");
+  });
+
+  elements.accountsRootInput.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    await handleAccountsRootUpdate();
   });
 
   elements.assignSelectedButton.addEventListener("click", handleAssignSelected);
