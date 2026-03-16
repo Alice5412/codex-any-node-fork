@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -73,6 +74,33 @@ def strip_windows_extended_path_prefix(path_value: str) -> str:
     if path_value.startswith('\\?\\'):
         return path_value[4:]
     return path_value
+
+
+def load_indexed_rollout_pairs(codex_home: Path) -> set[tuple[str, str]]:
+    db_path = codex_home / "state_5.sqlite"
+    if not db_path.exists():
+        return set()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("SELECT id, rollout_path FROM threads").fetchall()
+    except sqlite3.DatabaseError:
+        return set()
+    finally:
+        conn.close()
+
+    pairs: set[tuple[str, str]] = set()
+    for row in rows:
+        thread_id = str(row["id"] or "").strip()
+        rollout_path = str(row["rollout_path"] or "").strip()
+        if not thread_id or not rollout_path:
+            continue
+        try:
+            normalized_rollout = str(Path(strip_windows_extended_path_prefix(rollout_path)).expanduser().resolve())
+        except OSError:
+            normalized_rollout = strip_windows_extended_path_prefix(rollout_path)
+        pairs.add((thread_id, normalized_rollout))
+    return pairs
 
 
 def _read_text_if_exists(path: Path) -> str:
@@ -170,6 +198,7 @@ def scan_local_workdir_conversations(
         raise ConversationTransferError(f"Codex sessions directory not found: {sessions_root}")
 
     normalized_workdir = normalize_workdir(workdir)
+    indexed_rollout_pairs = load_indexed_rollout_pairs(codex_home)
     latest_by_thread: dict[str, dict[str, object]] = {}
 
     for rollout_path in sessions_root.rglob(SESSION_GLOB):
@@ -177,6 +206,10 @@ def scan_local_workdir_conversations(
             metadata = parse_rollout(rollout_path, codex_home, default_provider)
         except (OSError, SessionToolError):
             continue
+        if indexed_rollout_pairs:
+            pair = (metadata.thread_id, str(metadata.rollout_path))
+            if pair not in indexed_rollout_pairs:
+                continue
         if metadata.cwd == Path():
             continue
         try:

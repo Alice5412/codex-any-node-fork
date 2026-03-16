@@ -1,10 +1,11 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -159,26 +160,24 @@ class ThreadMetadata:
         }
 
 
+def expected_thread_id_from_rollout_path(rollout_path: Path) -> str:
+    match = re.search(r"rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)\.jsonl$", rollout_path.name)
+    return str(match.group(1)) if match else ""
+
+
 def parse_rollout(rollout_path: Path, codex_home: Path | None = None, default_provider: str = "openai") -> ThreadMetadata:
     records = rollout_path.read_text(encoding="utf-8").splitlines()
     if not records:
         raise SessionToolError(f"empty rollout file: {rollout_path}")
 
-    meta_payload: dict[str, object] | None = None
+    expected_thread_id = expected_thread_id_from_rollout_path(rollout_path)
+    session_meta_payloads: list[dict[str, object]] = []
     cwd = Path()
-    source = "cli"
-    provider = default_provider
-    cli_version = ""
     sandbox_policy = "read_only"
     approval_mode = "on_request"
     title = ""
     first_user_message = ""
     tokens_used = 0
-    git_sha = None
-    git_branch = None
-    git_origin_url = None
-    agent_nickname = None
-    agent_role = None
 
     for line in records:
         try:
@@ -190,22 +189,7 @@ def parse_rollout(rollout_path: Path, codex_home: Path | None = None, default_pr
         if not isinstance(payload, dict):
             continue
         if event_type == "session_meta":
-            meta_payload = payload
-            source = str(payload.get("source") or source)
-            provider = str(payload.get("model_provider") or provider)
-            cli_version = str(payload.get("cli_version") or cli_version)
-            cwd_value = payload.get("cwd")
-            if isinstance(cwd_value, str) and cwd_value:
-                cwd = Path(cwd_value)
-            if isinstance(payload.get("agent_nickname"), str):
-                agent_nickname = payload["agent_nickname"]
-            if isinstance(payload.get("agent_role"), str):
-                agent_role = payload["agent_role"]
-            git = payload.get("git")
-            if isinstance(git, dict):
-                git_sha = git.get("commit_hash") or git_sha
-                git_branch = git.get("branch") or git_branch
-                git_origin_url = git.get("repository_url") or git_origin_url
+            session_meta_payloads.append(payload)
         elif event_type == "turn_context":
             sandbox_policy = str(payload.get("sandbox_policy") or sandbox_policy)
             approval_mode = str(payload.get("approval_policy") or approval_mode)
@@ -227,12 +211,45 @@ def parse_rollout(rollout_path: Path, codex_home: Path | None = None, default_pr
                     if isinstance(total, dict):
                         tokens_used = int(total.get("total_tokens") or tokens_used)
 
-    if meta_payload is None:
+    if not session_meta_payloads:
         raise SessionToolError(f"missing session_meta in {rollout_path}")
+
+    meta_payload = next(
+        (
+            payload
+            for payload in session_meta_payloads
+            if expected_thread_id and str(payload.get("id") or "").strip() == expected_thread_id
+        ),
+        session_meta_payloads[0],
+    )
 
     thread_id = str(meta_payload.get("id") or "")
     if not thread_id:
         raise SessionToolError(f"missing thread id in {rollout_path}")
+
+    source = str(meta_payload.get("source") or "cli")
+    provider = str(meta_payload.get("model_provider") or default_provider)
+    cli_version = str(meta_payload.get("cli_version") or "")
+    meta_title = str(meta_payload.get("title") or "").strip()
+    meta_first_user_message = str(meta_payload.get("first_user_message") or "").strip()
+    cwd_value = meta_payload.get("cwd")
+    if isinstance(cwd_value, str) and cwd_value:
+        cwd = Path(cwd_value)
+    agent_nickname = meta_payload.get("agent_nickname") if isinstance(meta_payload.get("agent_nickname"), str) else None
+    agent_role = meta_payload.get("agent_role") if isinstance(meta_payload.get("agent_role"), str) else None
+    git_sha = None
+    git_branch = None
+    git_origin_url = None
+    git = meta_payload.get("git")
+    if isinstance(git, dict):
+        git_sha = git.get("commit_hash") or git_sha
+        git_branch = git.get("branch") or git_branch
+        git_origin_url = git.get("repository_url") or git_origin_url
+
+    if meta_first_user_message:
+        first_user_message = meta_first_user_message
+    if meta_title:
+        title = meta_title
 
     created_ts = meta_payload.get("timestamp")
     if not isinstance(created_ts, str):
@@ -479,18 +496,26 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     conn = ensure_db(args.codex_home)
     try:
         scanned = 0
+        scanned_ids: set[str] = set()
+        scanned_paths: set[str] = set()
         for path in iter_rollout_paths(args.codex_home):
             metadata = parse_rollout(path, args.codex_home, args.default_provider)
             if args.provider and metadata.model_provider != args.provider:
                 continue
             upsert_thread(conn, metadata)
             scanned += 1
-        if args.prune_missing:
-            stale_ids = [
-                row["id"]
-                for row in conn.execute("SELECT id, rollout_path FROM threads")
-                if not Path(row["rollout_path"]).exists()
-            ]
+            scanned_ids.add(metadata.thread_id)
+            scanned_paths.add(str(path.resolve()))
+        if args.prune_missing or args.provider is None:
+            stale_ids: list[str] = []
+            for row in conn.execute("SELECT id, rollout_path FROM threads"):
+                rollout_path = Path(row["rollout_path"])
+                rollout_text = str(rollout_path.resolve()) if rollout_path.exists() else str(rollout_path)
+                if not rollout_path.exists():
+                    stale_ids.append(row["id"])
+                    continue
+                if args.provider is None and rollout_text in scanned_paths and row["id"] not in scanned_ids:
+                    stale_ids.append(row["id"])
             for thread_id in stale_ids:
                 delete_thread(conn, thread_id)
         print(f"reindexed {scanned} session(s)")
@@ -748,3 +773,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
+

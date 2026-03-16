@@ -1,4 +1,5 @@
-import json
+﻿import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -125,6 +126,43 @@ class ConversationTransferTests(unittest.TestCase):
         self.assertEqual(by_id["thread-ambiguous"].assigned_account, "user1")
         self.assertEqual(by_id["thread-ambiguous"].assignment_source, "manual")
 
+    def test_scan_local_workdir_conversations_requires_indexed_thread_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_home = root / ".codex"
+            workdir = root / "workspace"
+            workdir.mkdir(parents=True, exist_ok=True)
+
+            indexed_rollout = write_rollout(
+                codex_home,
+                thread_id="thread-indexed",
+                provider="teamplus",
+                cwd=workdir,
+                title="Indexed conversation",
+            )
+            write_rollout(
+                codex_home,
+                thread_id="thread-unindexed",
+                provider="teamplus",
+                cwd=workdir,
+                title="Unindexed conversation",
+            )
+
+            conn = sqlite3.connect(codex_home / "state_5.sqlite")
+            conn.execute(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO threads (id, rollout_path) VALUES (?, ?)",
+                ("thread-indexed", str(indexed_rollout.resolve())),
+            )
+            conn.commit()
+            conn.close()
+
+            rows = scan_local_workdir_conversations(codex_home, workdir)
+
+            self.assertEqual([row["thread_id"] for row in rows], ["thread-indexed"])
+
     def test_copy_conversations_to_account_creates_new_thread_and_overrides_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -194,7 +232,44 @@ class ConversationTransferTests(unittest.TestCase):
             self.assertIsNotNone(imported_metadata)
             self.assertEqual(imported_metadata.model_provider, "openai")
 
+    def test_parse_rollout_keeps_first_session_meta_when_nested_thread_metadata_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_home = Path(tmpdir) / ".codex"
+            workdir = Path(tmpdir) / "workspace"
+            workdir.mkdir(parents=True, exist_ok=True)
+            rollout_path = write_rollout(
+                codex_home,
+                thread_id="thread-new",
+                provider="teamplus",
+                cwd=workdir,
+                title="New thread title",
+            )
+            nested_session_meta = {
+                "timestamp": "2026-03-16T01:02:03Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "thread-old",
+                    "timestamp": "2026-03-16T01:00:00Z",
+                    "cwd": str(workdir),
+                    "originator": "Codex Desktop",
+                    "cli_version": "0.108.0-alpha.8",
+                    "source": "vscode",
+                    "model_provider": "openai",
+                },
+            }
+            original_lines = rollout_path.read_text(encoding="utf-8").splitlines()
+            rollout_path.write_text(
+                "\n".join([original_lines[0], json.dumps(nested_session_meta), *original_lines[1:]]) + "\n",
+                encoding="utf-8",
+            )
+
+            metadata = parse_rollout(rollout_path, codex_home, "openai")
+
+            self.assertEqual(metadata.thread_id, "thread-new")
+            self.assertEqual(metadata.model_provider, "teamplus")
+
     def test_current_account_visible_threads_override_ambiguous_assignment(self) -> None:
+
         profiles = [
             AccountProfile(name="user1", directory=Path("user1"), description="", provider="openai"),
             AccountProfile(name="user2", directory=Path("user2"), description="", provider="openai"),
@@ -259,3 +334,5 @@ class ConversationTransferTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

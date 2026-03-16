@@ -5,6 +5,39 @@ import subprocess
 import time
 
 
+def find_codex_desktop_app_id() -> str:
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    result = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                "Get-StartApps | "
+                "Where-Object { $_.AppID -like 'OpenAI.Codex_*' } | "
+                "Select-Object -First 1 -ExpandProperty AppID"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        creationflags=creationflags,
+        check=False,
+    )
+    return result.stdout.strip()
+
+
+def build_desktop_launch_command(executable_path: str, app_id: str) -> list[str]:
+    if app_id:
+        return ["explorer.exe", f"shell:AppsFolder\\{app_id}"]
+    return [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        f"Start-Process -FilePath '{executable_path}'",
+    ]
+
+
 def find_running_codex_desktop_executable() -> str:
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     result = subprocess.run(
@@ -34,6 +67,7 @@ def find_running_codex_desktop_executable() -> str:
 
 def restart_codex_desktop_app() -> tuple[str, str]:
     executable_path = find_running_codex_desktop_executable()
+    app_id = find_codex_desktop_app_id()
     if not executable_path:
         return "not_running", ""
 
@@ -58,12 +92,7 @@ def restart_codex_desktop_app() -> tuple[str, str]:
         )
         time.sleep(1.5)
         subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"Start-Process -FilePath '{executable_path}'",
-            ],
+            build_desktop_launch_command(executable_path, app_id),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=creationflags,

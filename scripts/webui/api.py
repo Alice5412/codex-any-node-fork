@@ -365,7 +365,7 @@ class ToolkitWebService:
             target_turn = next((turn for turn in turns if turn.turn_id == turn_id), None)
             if target_turn is None:
                 raise WebUiError(f"Target turn was not found: {turn_id}")
-            result = perform_fork(session, target_turn, client)
+            result = perform_fork(self.codex_home, session, target_turn, client)
         except ForkToolError as exc:
             raise WebUiError(str(exc)) from exc
         finally:

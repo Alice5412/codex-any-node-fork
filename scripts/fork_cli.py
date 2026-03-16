@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 from __future__ import annotations
 
 import base64
@@ -42,6 +42,9 @@ from transfer_cli import (
 SESSION_GLOB = "rollout-*.jsonl"
 DEFAULT_CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 WINDOWS_APPDATA_CODEX = Path.home() / "AppData" / "Roaming" / "npm" / "codex.cmd"
+WINDOWS_APPDATA_CODEX_JS = (
+    Path.home() / "AppData" / "Roaming" / "npm" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+)
 
 
 class ForkToolError(RuntimeError):
@@ -110,6 +113,21 @@ def shorten(text: str, limit: int = 100) -> str:
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: limit - 3] + "..."
+
+
+def resolve_codex_command_args(command: str) -> list[str]:
+    candidate = Path(command)
+    if candidate.suffix.lower() == ".js":
+        node_exe = candidate.parent.parent.parent.parent.parent / "node.exe"
+        node_command = str(node_exe) if node_exe.exists() else "node"
+        return [node_command, str(candidate)]
+    if candidate.suffix.lower() in {".cmd", ".ps1"}:
+        js_path = candidate.parent / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+        if js_path.exists():
+            node_exe = candidate.parent / "node.exe"
+            node_command = str(node_exe) if node_exe.exists() else "node"
+            return [node_command, str(js_path)]
+    return [command]
 
 
 def safe_json_loads(line: str) -> dict | None:
@@ -625,7 +643,7 @@ class SimpleWebSocket:
 
 class CodexAppServerClient:
     def __init__(self, codex_command: str | None = None) -> None:
-        self.codex_command = codex_command or self._find_codex_command()
+        self.codex_command_args = resolve_codex_command_args(codex_command or self._find_codex_command())
         self.process: subprocess.Popen[str] | None = None
         self.socket: SimpleWebSocket | None = None
         self.request_id = 0
@@ -636,6 +654,8 @@ class CodexAppServerClient:
             found = shutil.which(name)
             if found:
                 return found
+        if WINDOWS_APPDATA_CODEX_JS.exists():
+            return str(WINDOWS_APPDATA_CODEX_JS)
         if WINDOWS_APPDATA_CODEX.exists():
             return str(WINDOWS_APPDATA_CODEX)
         raise ForkToolError("Cannot locate codex command. Install Codex CLI or add it to PATH.")
@@ -648,7 +668,7 @@ class CodexAppServerClient:
         app_server_url = f"ws://127.0.0.1:{self.port}"
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.process = subprocess.Popen(
-            [self.codex_command, "app-server", "--listen", app_server_url],
+            [*self.codex_command_args, "app-server", "--listen", app_server_url],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=creationflags,
@@ -1126,6 +1146,7 @@ def confirm_fork(session: SessionSummary, turn: UserTurnSummary) -> bool:
 
 
 def perform_fork(
+    codex_home: Path,
     session: SessionSummary,
     turn: UserTurnSummary,
     client: CodexAppServerClient,
@@ -1284,7 +1305,7 @@ def run_interactive(codex_home: Path, workdir: Path) -> int:
             if not confirm_fork(session, turn):
                 continue
 
-            result = perform_fork(session, turn, client)
+            result = perform_fork(codex_home, session, turn, client)
             client.stop()
             restart_status, restart_error = restart_codex_desktop_app()
             result["desktop_app_restart_status"] = restart_status
@@ -1429,3 +1450,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

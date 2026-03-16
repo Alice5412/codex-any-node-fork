@@ -212,15 +212,13 @@ def run_webui_server(
     port: int,
     open_browser: bool,
 ) -> int:
-    service = ToolkitWebService(
+    server, url = create_webui_server(
         codex_home=codex_home,
-        accounts_root=accounts_root,
         initial_workdir=initial_workdir,
+        accounts_root=accounts_root,
+        host=host,
+        port=port,
     )
-    server = ToolkitWebUiServer((host, port), service)
-    actual_host, actual_port = server.server_address[:2]
-    browser_host = "127.0.0.1" if actual_host in {"0.0.0.0", "::", ""} else actual_host
-    url = f"http://{browser_host}:{actual_port}"
     print(f"Web UI listening on {url}")
     print("Press Ctrl+C to stop.")
     if open_browser:
@@ -232,3 +230,28 @@ def run_webui_server(
     finally:
         server.server_close()
     return 0
+
+
+def build_browser_url(host: str, port: int) -> str:
+    browser_host = "127.0.0.1" if host in {"0.0.0.0", "::", ""} else host
+    if ":" in browser_host and not browser_host.startswith("["):
+        browser_host = f"[{browser_host}]"
+    return f"http://{browser_host}:{port}"
+
+
+def create_webui_server(
+    *,
+    codex_home: Path,
+    initial_workdir: Path | None,
+    accounts_root: Path | None,
+    host: str,
+    port: int,
+) -> tuple[ToolkitWebUiServer, str]:
+    service = ToolkitWebService(
+        codex_home=codex_home,
+        accounts_root=accounts_root,
+        initial_workdir=initial_workdir,
+    )
+    server = ToolkitWebUiServer((host, port), service)
+    actual_host, actual_port = server.server_address[:2]
+    return server, build_browser_url(str(actual_host), int(actual_port))

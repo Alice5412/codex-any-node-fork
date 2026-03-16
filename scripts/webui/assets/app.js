@@ -9,6 +9,9 @@ const state = {
   selectedTransferIds: new Set(),
 };
 
+const SESSION_TITLE_LIMIT = 20;
+const SESSION_PREVIEW_LIMIT = 200;
+
 const elements = {
   heroSubtitle: document.getElementById("heroSubtitle"),
   phaseBadge: document.getElementById("phaseBadge"),
@@ -240,6 +243,17 @@ function currentAccountsRootInput() {
   return elements.accountsRootInput.value.trim();
 }
 
+function truncateDisplayText(value, limit) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit)}...`;
+}
+
 function filteredSessions() {
   const query = state.sessionSearch.trim().toLowerCase();
   if (!query) {
@@ -262,13 +276,15 @@ function renderSessions() {
     return;
   }
   sessions.forEach((session) => {
+    const displayTitle = truncateDisplayText(session.title || session.threadId, SESSION_TITLE_LIMIT);
+    const displayPreview = truncateDisplayText(session.preview || "No preview available.", SESSION_PREVIEW_LIMIT);
     const card = document.createElement("article");
     card.className = `session-card ${session.threadId === state.selectedSessionId ? "selected" : ""}`;
     card.innerHTML = `
       <div class="session-header">
         <div>
-          <div class="session-title">${escapeHtml(session.title || session.threadId)}</div>
-          <div class="session-copy">${escapeHtml(session.preview || "No preview available.")}</div>
+          <div class="session-title">${escapeHtml(displayTitle)}</div>
+          <div class="session-copy">${escapeHtml(displayPreview)}</div>
         </div>
         <div class="session-meta">
           <span class="chip">${escapeHtml(session.updatedLabel)}</span>
@@ -318,13 +334,14 @@ function renderTurns() {
     return;
   }
   state.turns.forEach((turn) => {
+    const displayTurnText = truncateDisplayText(turn.text || turn.preview || "No text available.", SESSION_PREVIEW_LIMIT);
     const card = document.createElement("article");
     card.className = "turn-card";
     card.innerHTML = `
       <div class="session-header">
         <div>
           <div class="session-title">Turn ${turn.index}</div>
-          <div class="turn-copy">${escapeHtml(turn.text || turn.preview || "No text available.")}</div>
+          <div class="turn-copy">${escapeHtml(displayTurnText)}</div>
         </div>
         <div class="turn-meta">
           <span class="chip">${escapeHtml(turn.source)}</span>
@@ -423,6 +440,8 @@ function renderTransfer() {
     elements.transferList.appendChild(createEmptyState("No conversations are available in this transfer group."));
   } else {
     visible.forEach((conversation) => {
+      const displayTitle = truncateDisplayText(conversation.title || conversation.threadId, SESSION_TITLE_LIMIT);
+      const displayPreview = truncateDisplayText(conversation.preview || "No preview available.", SESSION_PREVIEW_LIMIT);
       const card = document.createElement("label");
       const checked = state.selectedTransferIds.has(conversation.threadId);
       card.className = `transfer-card ${checked ? "selected" : ""}`;
@@ -432,8 +451,8 @@ function renderTransfer() {
           <div class="grow">
             <div class="transfer-header">
               <div>
-                <div class="transfer-title">${escapeHtml(conversation.title || conversation.threadId)}</div>
-                <div class="transfer-copy">${escapeHtml(conversation.preview || "No preview available.")}</div>
+                <div class="transfer-title">${escapeHtml(displayTitle)}</div>
+                <div class="transfer-copy">${escapeHtml(displayPreview)}</div>
               </div>
               <div class="transfer-meta">
                 <span class="chip">${escapeHtml(conversation.modelProvider || "provider unknown")}</span>
@@ -628,3 +647,4 @@ async function bootstrap() {
 }
 
 bootstrap();
+
