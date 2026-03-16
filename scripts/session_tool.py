@@ -17,6 +17,7 @@ import uuid
 ID_KEYS = {"id", "thread_id", "forked_from_id"}
 SESSION_DIRNAME = "sessions"
 ARCHIVED_DIRNAME = "archived_sessions"
+SESSION_INDEX_FILENAME = "session_index.jsonl"
 
 
 class SessionToolError(RuntimeError):
@@ -47,6 +48,36 @@ def epoch_seconds(value: dt.datetime | None) -> int | None:
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def session_index_path(codex_home: Path) -> Path:
+    return codex_home / SESSION_INDEX_FILENAME
+
+
+def get_thread_name_override(codex_home: Path, thread_id: str) -> str | None:
+    path = session_index_path(codex_home)
+    if not path.exists():
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    thread_name: str | None = None
+    normalized_thread_id = thread_id.strip()
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id") or "").strip() != normalized_thread_id:
+            continue
+        candidate = str(entry.get("thread_name") or "").strip()
+        if candidate:
+            thread_name = candidate
+    return thread_name
 
 
 def rollout_root(codex_home: Path, archived: bool) -> Path:
@@ -250,6 +281,10 @@ def parse_rollout(rollout_path: Path, codex_home: Path | None = None, default_pr
         first_user_message = meta_first_user_message
     if meta_title:
         title = meta_title
+    if codex_home is not None:
+        thread_name_override = get_thread_name_override(codex_home, thread_id)
+        if thread_name_override:
+            title = thread_name_override
 
     created_ts = meta_payload.get("timestamp")
     if not isinstance(created_ts, str):

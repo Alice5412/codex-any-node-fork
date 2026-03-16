@@ -8,7 +8,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from desktop_app import build_desktop_launch_command  # noqa: E402
+from desktop_app import build_desktop_launch_command, build_desktop_launch_commands  # noqa: E402
 from fork_cli import resolve_codex_command_args  # noqa: E402
 
 
@@ -20,7 +20,21 @@ class LauncherHelperTests(unittest.TestCase):
         )
         self.assertEqual(
             command,
-            ["explorer.exe", r"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App"],
+            ["cmd.exe", "/c", 'start "" "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App"'],
+        )
+
+    def test_build_desktop_launch_commands_include_fallbacks(self) -> None:
+        commands = build_desktop_launch_commands(
+            r"C:\Program Files\WindowsApps\OpenAI.Codex\app\Codex.exe",
+            "OpenAI.Codex_2p2nqsd0c76g0!App",
+        )
+        self.assertEqual(
+            commands,
+            [
+                ["cmd.exe", "/c", 'start "" "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App"'],
+                ["explorer.exe", r"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App"],
+                [r"C:\Program Files\WindowsApps\OpenAI.Codex\app\Codex.exe"],
+            ],
         )
 
     def test_resolve_codex_command_args_prefers_node_wrapper_for_cmd(self) -> None:
